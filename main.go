@@ -23,12 +23,13 @@ import (
 )
 
 type Config struct {
-	TelegramToken  string
-	TelegramChatID int64
-	APIKey         string
-	Port           string
-	Prefork        bool
-	Concurrency    int
+	TelegramToken    string
+	TelegramChatID   int64
+	TelegramMarketID int64
+	APIKey           string
+	Port             string
+	Prefork          bool
+	Concurrency      int
 }
 
 func main() {
@@ -59,6 +60,7 @@ func main() {
 
 	app.Use("/api", authMiddleware(config.APIKey))
 
+	// Original endpoint with HTML formatting
 	app.Post("/api/v1/telegram/send", func(c *fiber.Ctx) error {
 
 		var data map[string]interface{}
@@ -104,6 +106,50 @@ func main() {
 		}
 	})
 
+	// New endpoint for market messages with Markdown formatting
+	app.Post("/api/v1/telegram/send/market", func(c *fiber.Ctx) error {
+
+		var data map[string]interface{}
+		if err := json.Unmarshal(c.Body(), &data); err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "Invalid JSON")
+		}
+
+		messageVal, ok := data["message"]
+		if !ok {
+			return fiber.NewError(fiber.StatusBadRequest, "Missing 'message' field")
+		}
+
+		message, ok := messageVal.(string)
+		if !ok {
+			return fiber.NewError(fiber.StatusBadRequest, "'message' field must be a string")
+		}
+
+		resultChan := make(chan error, 1)
+
+		go func() {
+			// Send message directly to market chat with Markdown formatting
+			msg := tgbotapi.NewMessage(config.TelegramMarketID, message)
+			msg.ParseMode = "MarkdownV2"
+
+			_, err := bot.Send(msg)
+			resultChan <- err
+		}()
+
+		select {
+		case err := <-resultChan:
+			if err != nil {
+				log.Printf("Failed to send market Telegram message: %v", err)
+				return fiber.NewError(fiber.StatusInternalServerError, "Failed to send market message")
+			}
+			return c.JSON(fiber.Map{
+				"success": true,
+				"message": "Market message sent successfully",
+			})
+		case <-time.After(10 * time.Second):
+			return fiber.NewError(fiber.StatusGatewayTimeout, "Telegram API timeout")
+		}
+	})
+
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
 			"status": "ok",
@@ -128,6 +174,7 @@ func loadConfig() (*Config, error) {
 
 	token := os.Getenv("TELEGRAM_TOKEN")
 	chatIDStr := os.Getenv("TELEGRAM_CHAT_ID")
+	marketIDStr := os.Getenv("TELEGRAM_BOT_MARKET_ID")
 	apiKey := os.Getenv("API_KEY")
 	port := os.Getenv("PORT")
 	preforkStr := os.Getenv("PREFORK")
@@ -137,6 +184,11 @@ func loadConfig() (*Config, error) {
 		return nil, fmt.Errorf("TELEGRAM_TOKEN, TELEGRAM_CHAT_ID and API_KEY must be set")
 	}
 
+	if marketIDStr == "" {
+		log.Println("Warning: TELEGRAM_BOT_MARKET_ID not set, using TELEGRAM_CHAT_ID as fallback")
+		marketIDStr = chatIDStr
+	}
+
 	if port == "" {
 		port = "3005"
 	}
@@ -144,9 +196,15 @@ func loadConfig() (*Config, error) {
 	chatIDStr = strings.TrimSpace(chatIDStr)
 	chatID, err := strconv.ParseInt(chatIDStr, 10, 64)
 	if err != nil {
-
 		log.Printf("Raw TELEGRAM_CHAT_ID value: '%s'", chatIDStr)
 		return nil, fmt.Errorf("invalid TELEGRAM_CHAT_ID: %v", err)
+	}
+
+	marketIDStr = strings.TrimSpace(marketIDStr)
+	marketID, err := strconv.ParseInt(marketIDStr, 10, 64)
+	if err != nil {
+		log.Printf("Raw TELEGRAM_BOT_MARKET_ID value: '%s'", marketIDStr)
+		return nil, fmt.Errorf("invalid TELEGRAM_BOT_MARKET_ID: %v", err)
 	}
 
 	prefork := false
@@ -160,7 +218,6 @@ func loadConfig() (*Config, error) {
 			concurrency = parsed
 		}
 	} else {
-
 		cpus := runtime.NumCPU()
 		if cpus > 1 {
 			concurrency = 256 * 1024 * cpus
@@ -168,12 +225,13 @@ func loadConfig() (*Config, error) {
 	}
 
 	return &Config{
-		TelegramToken:  token,
-		TelegramChatID: chatID,
-		APIKey:         apiKey,
-		Port:           port,
-		Prefork:        prefork,
-		Concurrency:    concurrency,
+		TelegramToken:    token,
+		TelegramChatID:   chatID,
+		TelegramMarketID: marketID,
+		APIKey:           apiKey,
+		Port:             port,
+		Prefork:          prefork,
+		Concurrency:      concurrency,
 	}, nil
 }
 
@@ -213,7 +271,6 @@ func formatMessageWithoutBraces(data map[string]interface{}) string {
 }
 
 func customErrorHandler(c *fiber.Ctx, err error) error {
-
 	code := fiber.StatusInternalServerError
 
 	if e, ok := err.(*fiber.Error); ok {

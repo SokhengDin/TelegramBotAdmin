@@ -1,17 +1,26 @@
 version: '3.8'
 
 services:
-  telegram-bot:
+  telegram-bot-admin:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: telegram-bot-admin
     restart: always
     ports:
       - "3005:3005"
     environment:
       - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      - TELEGRAM_BOT_MARKET_ID=${TELEGRAM_BOT_MARKET_ID}
       - API_KEY=${API_KEY}
       - PORT=3005
       - PREFORK=false
       - CONCURRENCY=262144
+
+    networks:
+      - monitor_network
+
+networks:
+  monitor_network:
+    external: true
