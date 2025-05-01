@@ -52,7 +52,3 @@ curl -X POST http://localhost:3000/api/v1/telegram/send \
 ```bash
 curl http://localhost:3000/health
 ```
-
-## License
-
-MIT
